@@ -1,0 +1,65 @@
+i cant understand how the tool will know which input to take
+how i will face if many questions came in same query
+how to handle inputs coming from another task previous tool
+
+
+
+langraph_agent was taking from mcp_server mcps and mcp_Server taking langraph_agent llm so making cycle
+
+
+
+in executor during interrupt i am saving at every task's tool result but when interrupt came everything got cleared then i got know 
+        from langgraph.types import Command
+        return Command(update=state, goto="executor")
+        these commands help to save my contwent actually even during interrupts
+
+
+-------------------------------------------------------------------
+PROBLEM : Deserializing unregistered type langraph_agent.Task from checkpoint
+-------------------------------------------------------------------
+
+CAUSE:
+  LangGraph serializes the full graph state (including custom Pydantic
+  models like Task and ToolStep) into msgpack format inside MemorySaver.
+  When the graph resumes after an interrupt, it tries to deserialize those
+  objects back. But MemorySaver was created WITHOUT telling it which custom
+  classes are allowed, so it printed a warning saying it cannot safely
+  deserialize 'langraph_agent.Task'. A second bug made this worse: builder()
+  was called fresh on every interrupt resume (inside testting.py), which
+  created a brand-new MemorySaver instance each time -- so the checkpoint
+  saved by the FIRST instance was invisible to the NEW instance, and the
+  graph re-ran from the beginning instead of resuming where it left off.
+
+WHAT HAPPENED DUE TO THAT PROBLEM:
+  1. Warning/error printed: 'Deserializing unregistered type
+     langraph_agent.Task from checkpoint. This will be blocked in a
+     future version.'
+  2. The graph did NOT resume from the interrupt -- it restarted from
+     scratch, causing the create_post tool to be called again even after
+     the user had already approved the post preview.
+  3. The post was being processed (and almost created) twice.
+
+HOW I SOLVED IT:
+  Fix 1 -- langraph_agent.py:
+    Replaced the plain MemorySaver() with one that uses a custom
+    JsonPlusSerializer configured with allowed_msgpack_modules listing
+    Task and ToolStep so LangGraph can safely deserialize them:
+
+      from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+      serializer = JsonPlusSerializer(
+          allowed_msgpack_modules=[
+              ('langraph_agent', 'Task'),
+              ('langraph_agent', 'ToolStep'),
+          ]
+      )
+      memory = MemorySaver(serde=serializer)
+
+  Fix 2 -- testting.py:
+    Cached the compiled graph in self._graph so the SAME MemorySaver
+    instance is reused for both start_graph() and the
+    user_interrupt_response handler. This means the in-memory checkpoint
+    saved during the interrupt is still visible when we resume:
+
+      if not hasattr(self, '_graph') or self._graph is None:
+          self._graph = builder()
+      graph = self._graph   # always the same object
