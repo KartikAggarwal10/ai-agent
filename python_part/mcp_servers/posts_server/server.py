@@ -87,6 +87,7 @@ async def make_api_request(method: str, endpoint: str, data: Optional[Dict] = No
         return response.json()
 
 
+
 server = Server("posts-mcp-server")
 
 ##  no. of (requests came,followers,followed),see post,see user

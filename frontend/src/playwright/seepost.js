@@ -1,5 +1,5 @@
 import { chromium } from "playwright";
-const url = "http://localhost:3000/"
+const url = "social-media-app-seven-fawn.vercel.app/"
 console.log("came1");
 export async function GET({email,password,post_id}) {
     console.log("came");

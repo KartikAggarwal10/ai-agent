@@ -174,19 +174,28 @@ async function getStoredCredentials(userName, email) {
 
     // Send question to Python backend
     function sendQuestion() {
+        if (!question.trim()) return;
         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            const lineCount = (question.match(/\n/g) || []).length + 1;
+            const isLongText = lineCount > 20;
+
             wsRef.current.send(
                 JSON.stringify({
                     type: "question",
                     question: question,
                     user_name: userName,
                     email: email,
+                    line_count: lineCount,
+                    is_pasted_data: isLongText,
                 })
             );
-            console.log("Question sent:", question);
+            console.log("Question sent (lines:", lineCount, "):", question.slice(0, 80));
             setQuestion("");
         }
     }
+
+    const currentLineCount = question ? (question.match(/\n/g) || []).length + 1 : 0;
+    const isPastedDataOver20 = currentLineCount > 20;
 
     return (
         <>
@@ -205,19 +214,97 @@ async function getStoredCredentials(userName, email) {
                 <img src={URL.createObjectURL(img)} alt="screenshot" width="500" />
             )}
 
-            <div>
+            <div style={{ marginTop: "15px", marginBottom: "15px" }}>
                 {messages.map((message, index) => (
-                    <p key={index}>{message}</p>
+                    <div
+                        key={index}
+                        style={{
+                            whiteSpace: "pre-wrap",
+                            background: "#f8f9fa",
+                            padding: "10px 14px",
+                            borderRadius: "6px",
+                            marginBottom: "8px",
+                            borderLeft: "4px solid #1a73e8",
+                            fontSize: "14px",
+                            lineHeight: "1.5"
+                        }}
+                    >
+                        {message}
+                    </div>
                 ))}
             </div>
 
-            <input
-                type="text"
-                value={question}
-                onChange={(e) => setQuestion(e.target.value)}
-                placeholder="Ask a question..."
-            />
-            <button onClick={sendQuestion}>Send</button>
+            {isPastedDataOver20 && (
+                <div
+                    style={{
+                        backgroundColor: "#e8f0fe",
+                        color: "#1a73e8",
+                        border: "1px solid #c2e7ff",
+                        borderRadius: "8px",
+                        padding: "10px 14px",
+                        marginBottom: "10px",
+                        fontSize: "13px",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "10px"
+                    }}
+                >
+                    <span style={{ fontSize: "18px" }}>📄</span>
+                    <div>
+                        <strong>Pasted Document Detected ({currentLineCount} lines &gt; 20 lines)</strong>
+                        <div style={{ color: "#3c4043", fontSize: "12px", marginTop: "2px" }}>
+                            This input will automatically be processed using <strong>Embeddings &amp; Vector Database</strong> (FAISS + BM25 Ensemble + CrossEncoder Reranker) just like in <code>embeddings.py</code>.
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px", maxWidth: "800px" }}>
+                <textarea
+                    rows={isPastedDataOver20 ? 8 : (question.includes("\n") ? 4 : 2)}
+                    value={question}
+                    onChange={(e) => setQuestion(e.target.value)}
+                    onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey && !isPastedDataOver20) {
+                            e.preventDefault();
+                            sendQuestion();
+                        } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                            e.preventDefault();
+                            sendQuestion();
+                        }
+                    }}
+                    placeholder="Ask a question or paste document data (>20 lines to trigger embeddings pipeline)..."
+                    style={{
+                        width: "100%",
+                        padding: "10px 12px",
+                        borderRadius: "6px",
+                        border: isPastedDataOver20 ? "2px solid #1a73e8" : "1px solid #ccc",
+                        fontFamily: "inherit",
+                        fontSize: "14px",
+                        resize: "vertical",
+                        boxSizing: "border-box"
+                    }}
+                />
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontSize: "12px", color: isPastedDataOver20 ? "#1a73e8" : "#888" }}>
+                        Lines: {currentLineCount} {isPastedDataOver20 ? "(>20: Embeddings Mode Active)" : "(Tip: Ctrl+Enter to send)"}
+                    </span>
+                    <button
+                        onClick={sendQuestion}
+                        style={{
+                            padding: "8px 20px",
+                            backgroundColor: isPastedDataOver20 ? "#1a73e8" : "#333",
+                            color: "#fff",
+                            border: "none",
+                            borderRadius: "6px",
+                            cursor: "pointer",
+                            fontWeight: "500"
+                        }}
+                    >
+                        {isPastedDataOver20 ? "Process with Embeddings & Send" : "Send"}
+                    </button>
+                </div>
+            </div>
 
             {interupts.map((interrupt, index) => {
                 if (interrupt.action === "require_login") {

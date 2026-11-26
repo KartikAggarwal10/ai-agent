@@ -53,83 +53,31 @@ load_dotenv()
 posts_server_params = StdioServerParameters(command="python", args=["mcp_servers/posts_server/server.py"])
 ecommerce_params = StdioServerParameters(command="python", args=["mcp_servers/ecommerce/server.py"])
 tavily = AsyncTavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
-# t5_tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-large")
-# t5_model = AutoModelForSeq2SeqLM.from_pretrained("google/flan-t5-large")
-embedding = HuggingFaceEmbeddings(
-    model_name="./embedding_model"
+
+# -------------------
+# Embeddings & Hybrid Retrieval Service (Shared with testting.py)
+# -------------------
+from embedding_service import (
+    embedding_service,
+    is_more_than_20_lines,
+    EMBEDDING_MODEL_PATH
 )
 
-# -------------------
-# Vector DB
-# -------------------
-
-db = FAISS.load_local(
-    "vectorstore",
-    embedding,
-    allow_dangerous_deserialization=True
-)
-
-vector_retriever = db.as_retriever(
-    search_kwargs={
-        "k":20
-    }
-)
-
-# -------------------
-# BM25
-# -------------------
-
-
-docs = db.similarity_search("",k=1000)
-
-bm25 = BM25Retriever.from_documents(docs)
-
-bm25.k = 20
-
-# -------------------
-# Hybrid Retrieval
-# -------------------
-
-ensemble = EnsembleRetriever(
-    retrievers=[
-        vector_retriever,
-        bm25
-    ],
-    weights=[0.5,0.5]
-)
-
-# -------------------
-# Reranker -> inputs BM25 and similarity search dono ke ayenge so dono ko compare karke result dega
-# -------------------
-
-model = HuggingFaceCrossEncoder(
-    model_name="BAAI/bge-reranker-base"
-)
-
-reranker = CrossEncoderReranker(
-    model=model,
-    top_n=5
-)
-
-compression = ContextualCompressionRetriever(
-    base_retriever=ensemble,
-    base_compressor=reranker
-)
-
-# -------------------
-# Generator
-# -------------------
-
-generator = pipeline(
-    "text-generation",
-    model="distilgpt2"
-)
+embedding = embedding_service.embedding
+db = embedding_service.db
+vector_retriever = embedding_service.vector_retriever
+bm25 = embedding_service.bm25
+ensemble = embedding_service.ensemble
+reranker = embedding_service.reranker
+compression = embedding_service.compression
+generator = embedding_service.generator
 
 def cosine_similarity(a, b):
     a = np.array(a)
     b = np.array(b)
     return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
-model = SentenceTransformer("./embedding_model")
+
+model = SentenceTransformer(EMBEDDING_MODEL_PATH)
 
 # -------------------
 # MongoDB Memory
@@ -231,34 +179,14 @@ async def ask_interview_questions_from_project_displaying(
     res = vision_llm.invoke(messages)
     return res.content
 
-async def rag(state: State,prv,depended):
-    docs = compression.invoke(prv)
-
-    
+async def rag(state: State, prv: str, depended: list[str]) -> str:
+    """RAG tool powered by embedding_service (FAISS + BM25 + CrossEncoder reranker)."""
+    docs = embedding_service.retrieve_context(prv)
     context = "\n\n".join(
         d.page_content
         for d in docs
     )
-
-    prompt = f"""
-        Answer only using the context.
-                                            
-        Context:
-        {context}
-                                            
-        Question:
-        {prv}
-                                            
-        Answer:
-    """
-    answer = generator(
-        prompt,
-        max_new_tokens=256,
-        truncation=True,          # distilgpt2 caps at 1024 tokens; RAG context blows past it
-        return_full_text=False,   # otherwise generated_text contains your prompt too
-    )[0]["generated_text"]
-
-    return answer
+    return embedding_service.answer_query(prv, context=context)
 async def send_email(
     to_email: str,
     subject: str,
@@ -579,6 +507,10 @@ def generate_plan_readme(question: str, plan: PlannerOutput) -> str:
 
 
 async def need_img(state: State):
+    if is_more_than_20_lines(state.get("question", "")):
+        print("[INFO] Question has >20 lines. Ingesting into embeddings...")
+        embedding_service.ingest_pasted_text(state["question"])
+
     planner = use_img_or_not
 
     messages = [

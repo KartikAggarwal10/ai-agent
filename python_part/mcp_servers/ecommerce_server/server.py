@@ -87,6 +87,8 @@ class CreateProductParams(BaseModel):
     category: str
     stock: int
     images: List[str]
+
+    
 class loginUserParams(BaseModel):
     email : str
     password : str
